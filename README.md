@@ -27,12 +27,12 @@ We propose **ICQP-IGDSE**, an automated framework featuring:
 ```
 |-- ICQP-IGDSE
   |-- dse_database                 # databases, kernel sources, CDFGs, and dataset utilities
-  |-- CoGNN                        # ECoGNN / CoGNN model components
+  |-- CoGNN                        # ECoGNN model components
   |   +-- action_gumbel_layer.py
   |   +-- layers.py
   |   +-- model_parse.py
-  |-- save_models_and_data         # saved model weights and auxiliary data
-  |-- src                          # training, inference, and DSE entry points
+  |-- save_models_and_data         # saved model weights
+  |-- src                          # training, inference, and DSE
   |   +-- causal_data_utils.py
   |   +-- causal_model.py
   |   +-- config.py
@@ -48,7 +48,6 @@ We propose **ICQP-IGDSE**, an automated framework featuring:
   |   +-- saver.py
   |   +-- train.py
   |   +-- utils.py
-  |-- framework.pdf                # framework overview figure
 ```
 
 ## <span id="jump3">Required environment</span>

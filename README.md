@@ -12,7 +12,7 @@ This project presents an end-to-end framework for high-level synthesis (HLS) des
 
 **Framework overview:**
 
-![framework](D:\ICQP-IGDSE\论文绘图\framework.png)
+![framework](framework.png)
 
 ### Contribution
 

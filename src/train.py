@@ -183,48 +183,7 @@ def compute_causal_loss(model, data, code, design_points: Optional[List[DesignPo
             import traceback
             saver.warning(traceback.format_exc())
         return None
-
-def log_and_save_intervention_consistency_svg(delta_by_target: Dict[str, List[Tuple[float, float]]], target_list: List[str], svg_path: str, title: str, log_prefix: str='[InterventionConsistency]') -> None:
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    n = len(target_list)
-    if n == 0:
-        return
-    ncols = 2 if n > 3 else 1
-    nrows = (n + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
-    fig.suptitle(title, fontsize=12)
-    for i, tname in enumerate(target_list):
-        ridx, cidx = divmod(i, ncols)
-        ax = axes[ridx][cidx]
-        pairs = delta_by_target.get(tname, [])
-        if len(pairs) == 0:
-            ax.text(0.5, 0.5, 'no pairs', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f'{tname} (n=0)')
-            saver.log_info(f'{log_prefix} {tname}: Pearson r=n/a (n=0)')
-            continue
-        xs = np.array([p[0] for p in pairs], dtype=np.float64)
-        ys = np.array([p[1] for p in pairs], dtype=np.float64)
-        ax.scatter(xs, ys, s=8, alpha=0.6)
-        ax.axhline(0, color='gray', lw=0.5)
-        ax.axvline(0, color='gray', lw=0.5)
-        ax.set_xlabel('Δy (true)')
-        ax.set_ylabel('Δŷ (pred)')
-        if len(pairs) >= 2 and np.std(xs) > 1e-12 and (np.std(ys) > 1e-12):
-            r_coef, p_val = pearsonr(xs, ys)
-            ax.set_title(f'{tname}  n={len(pairs)}  r={r_coef:.4f}')
-            saver.log_info(f'{log_prefix} {tname}: Pearson r={r_coef:.6f} p={p_val:.4g} (n={len(pairs)})')
-        else:
-            ax.set_title(f'{tname}  n={len(pairs)}  r=n/a')
-            saver.log_info(f'{log_prefix} {tname}: Pearson r=n/a (n={len(pairs)})')
-    for j in range(len(target_list), nrows * ncols):
-        ridx, cidx = divmod(j, ncols)
-        axes[ridx][cidx].set_visible(False)
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(svg_path, format='svg')
-    plt.close(fig)
-
+        
 def report_class_loss(points_dict):
     d = points_dict[FLAGS.target[0]]
     labels = [data for data, _ in d['pred']]
@@ -402,9 +361,7 @@ def inference(dataset):
     test_points = li_points_split[2] if len(li_points_split) > 2 else None
     if test_points is not None:
         non_none_pts = sum((1 for p in test_points if p is not None))
-        saver.log_info(f'[Causal][Inference] test_points loaded: {non_none_pts}/{len(test_points)} non-None')
     all_non_none_pts = sum((1 for p in li_points if p is not None))
-    saver.log_info(f'[Causal][Inference] all_points loaded: {all_non_none_pts}/{len(li_points)} non-None')
     edge_dim = test_loader.dataset[0].edge_attr.shape[1]
     max_degree = -1
     for data in li[2]:
@@ -630,13 +587,8 @@ def train_main(dataset, pragma_dim=None):
     li_c = []
     li_points = []
     has_get_point = hasattr(dataset, 'get_point') or (hasattr(dataset, '_points_list') and dataset._points_list is not None)
-    if has_get_point:
-        saver.log_info(f'[Causal] Dataset supports get_point, will extract design_points during data loading')
-    else:
-        saver.log_info(f'[Causal] Dataset does not support get_point, design_points will be None')
     global_points_list = None
     if not has_get_point:
-        saver.log_info(f'[Causal] Will load points_list.pkl from two_tower_dataset/points/{ benchmark} /{ kernel} / directory')
         try:
             from utils import get_save_path
             from config import FLAGS
@@ -647,12 +599,6 @@ def train_main(dataset, pragma_dim=None):
                 import pickle
                 with open(global_points_file, 'rb') as f:
                     global_points_list = pickle.load(f)
-                saver.log_info(f'[Causal] Loaded global points_list.pkl as fallback from {global_points_file} ({len(global_points_list)} points)')
-                saver.log_info(f'[Causal] Note: This is a fallback. Prefer loading from two_tower_dataset/points/ directory.')
-            else:
-                saver.log_info(f'[Causal] Global points_list.pkl not found at {global_points_file} (this is OK if using two_tower_dataset/points/)')
-        except Exception as e:
-            saver.warning(f'[Causal] Failed to load global points_list.pkl (fallback): {e}')
     global_idx = 0
     kernel_idx_map = {}
     for m in tqdm(MACHSUITE_KERNEL[:minx], position=0, total=len(MACHSUITE_KERNEL[:minx]), file=sys.stdout):
@@ -706,18 +652,10 @@ def train_main(dataset, pragma_dim=None):
                                     file_idx = int(file_name.replace('.pt', ''))
                                 if file_idx is not None and 0 <= file_idx < len(kernel_points_list):
                                     point = kernel_points_list[file_idx]
-                                    if global_idx < 5:
-                                        saver.log_info(f'[Causal] ✓ Loaded point from two_tower_dataset/points/ for global_idx={global_idx}, kernel={m}, file_idx={file_idx}, file={file_name}')
-                                elif global_idx < 5:
-                                    saver.warning(f'[Causal] Invalid file_idx={file_idx} or out of range (len={len(kernel_points_list)}) for file={file_name}')
                             else:
-                                if global_idx < 5:
-                                    saver.warning(f'[Causal] points_list.pkl not found at new location: {points_file}')
                                 file_dir = os.path.dirname(file_path)
                                 old_points_file = os.path.join(file_dir, 'points_list.pkl')
                                 if os.path.exists(old_points_file):
-                                    if global_idx < 5:
-                                        saver.log_info(f'[Causal] Falling back to old location: {old_points_file}')
                                     import pickle
                                     with open(old_points_file, 'rb') as f:
                                         kernel_points_list = pickle.load(f)
@@ -729,32 +667,13 @@ def train_main(dataset, pragma_dim=None):
                                         file_idx = int(file_name.replace('.pt', ''))
                                     if file_idx is not None and 0 <= file_idx < len(kernel_points_list):
                                         point = kernel_points_list[file_idx]
-                                        if global_idx < 5:
-                                            saver.log_info(f'[Causal] ✓ Loaded point from old location (graph dir) for global_idx={global_idx}, kernel={m}')
-                                if point is None:
                                     if global_points_list is not None and global_idx < len(global_points_list):
                                         point = global_points_list[global_idx]
-                                        if global_idx < 5:
-                                            saver.log_info(f'[Causal] ⚠️  Loaded point from global points_list (fallback) for global_idx={global_idx}, kernel={m}')
-                                    elif global_idx < 5:
-                                        saver.warning(f"[Causal] points_list.pkl not found at {points_file} or {(old_points_file if 'old_points_file' in locals() else 'N/A')}, and global_points_list not available or out of range")
                         else:
-                            if global_idx < 5:
-                                saver.warning(f'[Causal] Failed to extract benchmark/kernel from path: {file_path}')
                             if point is None:
                                 if global_points_list is not None and global_idx < len(global_points_list):
                                     point = global_points_list[global_idx]
-                                    if global_idx < 5:
-                                        saver.log_info(f'[Causal] Loaded point from global points_list for global_idx={global_idx}, kernel={m}')
-                                elif global_idx < 5:
-                                    saver.warning(f'[Causal] Cannot extract benchmark/kernel and global_points_list not available')
-                    elif global_idx < 5:
-                        saver.warning(f'[Causal] Index {i} out of range for gpt (len={len(gpt)})')
                 except Exception as e:
-                    if global_idx < 5:
-                        saver.warning(f"[Causal] Failed to load point from {(file_path if 'file_path' in locals() else 'unknown')}: {e}")
-                        import traceback
-                        saver.warning(f'[Causal] Traceback: {traceback.format_exc()}')
             if point is None and global_points_list is not None and (global_idx < len(global_points_list)):
                 point = global_points_list[global_idx]
             li_points.append(point)
@@ -810,18 +729,10 @@ def train_main(dataset, pragma_dim=None):
                                     file_idx = int(file_name.replace('.pt', ''))
                                 if file_idx is not None and 0 <= file_idx < len(kernel_points_list):
                                     point = kernel_points_list[file_idx]
-                                    if global_idx < 5:
-                                        saver.log_info(f'[Causal] ✓ Loaded point from two_tower_dataset/points/ for global_idx={global_idx}, kernel={p}, file_idx={file_idx}, file={file_name}')
-                                elif global_idx < 5:
-                                    saver.warning(f'[Causal] Invalid file_idx={file_idx} or out of range (len={len(kernel_points_list)}) for file={file_name}')
                             else:
-                                if global_idx < 5:
-                                    saver.warning(f'[Causal] points_list.pkl not found at new location: {points_file}')
                                 file_dir = os.path.dirname(file_path)
                                 old_points_file = os.path.join(file_dir, 'points_list.pkl')
                                 if os.path.exists(old_points_file):
-                                    if global_idx < 5:
-                                        saver.log_info(f'[Causal] Falling back to old location: {old_points_file}')
                                     import pickle
                                     with open(old_points_file, 'rb') as f:
                                         kernel_points_list = pickle.load(f)
@@ -833,32 +744,13 @@ def train_main(dataset, pragma_dim=None):
                                         file_idx = int(file_name.replace('.pt', ''))
                                     if file_idx is not None and 0 <= file_idx < len(kernel_points_list):
                                         point = kernel_points_list[file_idx]
-                                        if global_idx < 5:
-                                            saver.log_info(f'[Causal] ✓ Loaded point from old location (graph dir) for global_idx={global_idx}, kernel={p}')
                                 if point is None:
                                     if global_points_list is not None and global_idx < len(global_points_list):
                                         point = global_points_list[global_idx]
-                                        if global_idx < 5:
-                                            saver.log_info(f'[Causal] ⚠️  Loaded point from global points_list (fallback) for global_idx={global_idx}, kernel={p}')
-                                    elif global_idx < 5:
-                                        saver.warning(f"[Causal] points_list.pkl not found at {points_file} or {(old_points_file if 'old_points_file' in locals() else 'N/A')}, and global_points_list not available or out of range")
                         else:
-                            if global_idx < 5:
-                                saver.warning(f'[Causal] Failed to extract benchmark/kernel from path: {file_path}')
                             if point is None:
                                 if global_points_list is not None and global_idx < len(global_points_list):
                                     point = global_points_list[global_idx]
-                                    if global_idx < 5:
-                                        saver.log_info(f'[Causal] Loaded point from global points_list for global_idx={global_idx}, kernel={p}')
-                                elif global_idx < 5:
-                                    saver.warning(f'[Causal] Cannot extract benchmark/kernel and global_points_list not available')
-                    elif global_idx < 5:
-                        saver.warning(f'[Causal] Index {i} out of range for gpt (len={len(gpt)})')
-                except Exception as e:
-                    if global_idx < 5:
-                        saver.warning(f"[Causal] Failed to load point from {(file_path if 'file_path' in locals() else 'unknown')}: {e}")
-                        import traceback
-                        saver.warning(f'[Causal] Traceback: {traceback.format_exc()}')
             if point is None and global_points_list is not None and (global_idx < len(global_points_list)):
                 point = global_points_list[global_idx]
             li_points.append(point)
@@ -894,14 +786,9 @@ def train_main(dataset, pragma_dim=None):
                 if li_points[point_idx] is not None:
                     kernel_points_loaded[p] += 1
                 point_idx += 1
-    saver.log_info(f'[Causal] Loaded {points_loaded}/{len(li_points)} design_points from points_list.pkl files')
-    saver.log_info(f'[Causal] Points loading summary by kernel:')
     for kernel, total in sorted(kernel_points_count.items()):
         loaded = kernel_points_loaded[kernel]
-        saver.log_info(f'[Causal]   {kernel}: {loaded}/{total} points loaded')
     if points_loaded == 0:
-        saver.warning(f'[Causal] ⚠️  No design_points loaded! This will prevent causal model from working.')
-        saver.warning(f'[Causal] ⚠️  Please ensure points_list.pkl files exist in two_tower_dataset/points/{ benchmark} /{ kernel} / directory.')
         if len(li_g) > 0:
             try:
                 first_kernel = MACHSUITE_KERNEL[0] if len(MACHSUITE_KERNEL) > 0 else poly_KERNEL[0]
@@ -919,7 +806,6 @@ def train_main(dataset, pragma_dim=None):
                         else:
                             first_dir = os.path.dirname(first_file)
                             first_points_file = os.path.join(first_dir, 'points_list.pkl')
-                        saver.warning(f'[Causal] Example: checking {first_points_file}, exists={os.path.exists(first_points_file)}')
             except Exception as e:
                 pass
     li_len = len(li_g)
@@ -952,7 +838,6 @@ def train_main(dataset, pragma_dim=None):
     train_points = li_points_split[0]
     val_points = li_points_split[1]
     test_points = li_points_split[2]
-    saver.log_info(f'[Causal] Points count: train={sum((1 for p in train_points if p is not None))}/{len(train_points)}, val={sum((1 for p in val_points if p is not None))}/{len(val_points)}, test={sum((1 for p in test_points if p is not None))}/{len(test_points)}')
     if len(li[0]) == 0:
         saver.error(f'No training data found! gp dictionary is empty or contains no valid kernels.')
         saver.error(f'This usually happens when force_regen=False and processed_file_names_dict structure is unexpected.')
@@ -1180,13 +1065,8 @@ def train(epoch, model, train_loader, train_codes, optimizer, train_points=None)
                     loss = loss + FLAGS.causal_lambda * causal_loss
                     causal_loss_total += causal_loss.item()
                     num_causal_pairs += 1
-                    if epoch == 0 and inx == 0:
-                        saver.log_info(f'[Causal] ✓ Causal loss computed: {causal_loss.item():.6f}, lambda={FLAGS.causal_lambda}')
-                elif epoch == 0 and inx == 0:
-                    saver.log_info(f'[Causal] ⚠️  Causal loss is None or zero (no valid pairs found)')
             except Exception as e:
                 if epoch == 0 and inx == 0:
-                    saver.log_info(f'[Causal] ✗ Warning: Failed to compute causal loss: {e}')
                     import traceback
                     traceback.print_exc()
         elif FLAGS.use_causal and FLAGS.causal_lambda == 0:
@@ -1216,20 +1096,12 @@ def train(epoch, model, train_loader, train_codes, optimizer, train_points=None)
                         ent = -(alpha_matrix * torch.log(alpha_matrix + eps)).sum(dim=1)
                         ent_mean = ent.mean()
                     loss = loss - beta_ent * ent_mean
-                    if epoch == 0 and inx == 0:
-                        saver.log_info(f'[Causal] ✓ Alpha entropy reg: entropy={ent_mean.item():.6f}, beta={beta_ent}')
         if FLAGS.use_causal and FLAGS.causal_reg_beta > 0:
             if hasattr(model, '_last_alpha_matrix'):
                 alpha_matrix = model._last_alpha_matrix
                 if alpha_matrix is not None:
                     alpha_reg = FLAGS.causal_reg_beta * torch.abs(alpha_matrix).mean()
                     loss = loss + alpha_reg
-                    if epoch == 0 and inx == 0:
-                        saver.log_info(f'[Causal] ✓ Alpha matrix regularization: {alpha_reg.item():.6f} (shape: {alpha_matrix.shape}, beta={FLAGS.causal_reg_beta})')
-                elif epoch == 0 and inx == 0:
-                    saver.log_info(f'[Causal] ⚠️  Alpha matrix is None (causal head may not have been called)')
-            elif epoch == 0 and inx == 0:
-                saver.log_info(f'[Causal] ⚠️  Model does not have _last_alpha_matrix attribute')
         loss.backward()
         if FLAGS.use_causal and epoch == 0 and (inx == 0):
             try:
@@ -1272,11 +1144,8 @@ def train(epoch, model, train_loader, train_codes, optimizer, train_points=None)
         avg_loss_dict = {key: v / len(train_loader) for key, v in loss_dict.items()}
         if FLAGS.use_causal and FLAGS.causal_lambda > 0 and (num_causal_pairs > 0):
             avg_causal_loss = causal_loss_total / num_causal_pairs
-            saver.log_info(f'[Causal] Epoch {epoch + 1}: Causal loss avg = {avg_causal_loss:.6f}, pairs = {num_causal_pairs}')
         if FLAGS.use_causal and FLAGS.task == 'regression':
             total_iv = sum((len(intervention_delta_train[t]) for t in target_list))
-            if total_iv > 0:
-                log_and_save_intervention_consistency_svg(intervention_delta_train, target_list, join(saver.get_log_dir(), f'intervention_consistency_train_epoch_{epoch + 1}.svg'), title=f'Train epoch {epoch + 1}: intervention consistency (Δy vs Δŷ)', log_prefix='[InterventionConsistency][Train]')
         return (avg_loss, avg_loss_dict)
     else:
         return (1 - correct / total_loss, {key: v / len(train_loader) for key, v in loss_dict.items()})
@@ -1434,7 +1303,6 @@ def test(loader, codes, tvt, model, epoch, plot_test=False, test_losses=[-1], de
         inx += FLAGS.batch_size
     try:
         if FLAGS.use_causal:
-            saver.log_info(f'[Causal] Checking for alpha_matrix (use_causal={FLAGS.use_causal})')
             if hasattr(model, '_last_alpha_matrix'):
                 alpha = getattr(model, '_last_alpha_matrix', None)
                 if alpha is not None:
@@ -1446,20 +1314,6 @@ def test(loader, codes, tvt, model, epoch, plot_test=False, test_losses=[-1], de
                     fn = f'alpha_matrix_epoch_{epoch + 1}_{tvt}.pt'
                     filepath = _join(obj_dir, fn)
                     _torch.save({'alpha_matrix': alpha.detach().cpu(), 'target_list': target_list, 'pragma_ids_batch': getattr(model, '_last_pragma_ids_batch', None), 'pragma_mask_batch': [m.detach().cpu() if hasattr(m, 'detach') else m for m in getattr(model, '_last_pragma_mask_batch', None) or []]}, filepath)
-                    saver.log_info(f'[Causal] ✅ Successfully saved alpha_matrix to {filepath}')
-                    saver.log_info(f"[Causal] Alpha matrix shape: {(alpha.shape if alpha is not None else 'None')}")
-                else:
-                    saver.log_info(f'[Causal] ⚠️ Warning: alpha_matrix is None (use_causal={FLAGS.use_causal})')
-                    saver.log_info(f"[Causal] Debug: model.use_causal={getattr(model, 'use_causal', 'N/A')}")
-            else:
-                saver.log_info(f'[Causal] ⚠️ Warning: model does not have _last_alpha_matrix attribute')
-                saver.log_info(f"[Causal] Debug: model attributes: {[attr for attr in dir(model) if 'alpha' in attr or 'causal' in attr.lower()]}")
-        else:
-            saver.log_info(f'[Causal] Info: use_causal is False, skipping alpha_matrix save')
-    except Exception as _e:
-        saver.log_info(f'[Causal] ❌ Error saving alpha_matrix: {_e}')
-        import traceback
-        traceback.print_exc()
     if FLAGS.plot_pred_points and tvt == 'test' and (plot_test or (test_losses and total / len(loader) < min(test_losses))):
         from utils import plot_points, plot_points_with_subplot
         saver.log_info(f'@@@ plot_pred_points')
@@ -1474,15 +1328,10 @@ def test(loader, codes, tvt, model, epoch, plot_test=False, test_losses=[-1], de
             result_df = _report_rmse_etc(points_dict, f'epoch {epoch}:', True)
         elif FLAGS.task == 'class':
             report_class_loss(points_dict)
-    if FLAGS.use_causal and causal_eval_count > 0:
-        saver.log_info(f'[Causal][Eval] {tvt} causal_consistency={causal_eval_total / causal_eval_count:.6f} (batches={causal_eval_count})')
     if FLAGS.use_causal and FLAGS.task == 'regression':
         n_iv_per_target = max((len(intervention_delta_eval[t]) for t in target_list), default=0)
         _cap_note = f'pair_count<{effective_iv_per_batch_cap} means this split had at most that many Hamming 1–2 pairs in the contributing batch(es), not a cap artifact.' if n_iv_per_target < effective_iv_per_batch_cap else f'pair_count reached per-batch cap ({effective_iv_per_batch_cap}).'
-        saver.log_info(f'[InterventionConsistency] {tvt}: batches_with_intervention_pairs={intervention_batches_with_pairs}/{len(loader)}, pair_count_per_target={n_iv_per_target}, per_batch_cap(effective)={effective_iv_per_batch_cap} (causal_max_pairs_eval={_raw_eval_pairs}, fallback to causal_max_pairs_per_batch when eval=0). {_cap_note}')
-        total_iv = sum((len(intervention_delta_eval[t]) for t in target_list))
-        if total_iv > 0:
-            log_and_save_intervention_consistency_svg(intervention_delta_eval, target_list, join(saver.get_log_dir(), f'intervention_consistency_{tvt}_epoch_{epoch + 1}.svg'), title=f'{tvt} epoch {epoch + 1}: intervention consistency (Δy vs Δŷ)', log_prefix=f'[InterventionConsistency][{tvt}]')
+        total_iv = sum((len(intervention_delta_eval[t]) for t in target_list))')
     if FLAGS.task == 'regression':
         if FLAGS.subtask == 'inference':
             return (total / len(loader), {key: v / len(loader) for key, v in loss_dict.items()}, inference_loss / len(loader) / FLAGS.batch_size)
